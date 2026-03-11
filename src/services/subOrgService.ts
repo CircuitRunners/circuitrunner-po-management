@@ -12,18 +12,18 @@ import { SubOrganization } from '../types';
 
 // Complete list of CircuitRunners sub-organizations
 const defaultSubOrganizations: Omit<SubOrganization, 'id'>[] = [
-  { name: 'Outreach', budgetAllocated: 8000, budgetSpent: 0 },
-  { name: 'Marketing', budgetAllocated: 6000, budgetSpent: 0 },
-  { name: 'FTC 1002', budgetAllocated: 12000, budgetSpent: 0 },
-  { name: 'FTC 11347', budgetAllocated: 10000, budgetSpent: 0 },
-  { name: 'FRC', budgetAllocated: 15000, budgetSpent: 0 },
-  { name: 'Operations', budgetAllocated: 9000, budgetSpent: 0 },
-  { name: 'Fundraising', budgetAllocated: 4000, budgetSpent: 0 },
-  { name: 'Miscellaneous', budgetAllocated: 3000, budgetSpent: 0 },
-  { name: 'Equipment', budgetAllocated: 7500, budgetSpent: 0 },
-  { name: 'Travel', budgetAllocated: 5000, budgetSpent: 0 },
-  { name: 'Training', budgetAllocated: 2500, budgetSpent: 0 },
-  { name: 'Community Events', budgetAllocated: 4500, budgetSpent: 0 }
+  { name: 'Outreach', initialBudget: 8000, credit: 0, budgetAllocated: 8000, budgetSpent: 0 },
+  { name: 'Marketing', initialBudget: 6000, credit: 0, budgetAllocated: 6000, budgetSpent: 0 },
+  { name: 'FTC 1002', initialBudget: 12000, credit: 0, budgetAllocated: 12000, budgetSpent: 0 },
+  { name: 'FTC 11347', initialBudget: 10000, credit: 0, budgetAllocated: 10000, budgetSpent: 0 },
+  { name: 'FRC', initialBudget: 15000, credit: 0, budgetAllocated: 15000, budgetSpent: 0 },
+  { name: 'Operations', initialBudget: 9000, credit: 0, budgetAllocated: 9000, budgetSpent: 0 },
+  { name: 'Fundraising', initialBudget: 4000, credit: 0, budgetAllocated: 4000, budgetSpent: 0 },
+  { name: 'Miscellaneous', initialBudget: 3000, credit: 0, budgetAllocated: 3000, budgetSpent: 0 },
+  { name: 'Equipment', initialBudget: 7500, credit: 0, budgetAllocated: 7500, budgetSpent: 0 },
+  { name: 'Travel', initialBudget: 5000, credit: 0, budgetAllocated: 5000, budgetSpent: 0 },
+  { name: 'Training', initialBudget: 2500, credit: 0, budgetAllocated: 2500, budgetSpent: 0 },
+  { name: 'Community Events', initialBudget: 4500, credit: 0, budgetAllocated: 4500, budgetSpent: 0 }
 ];
 
 export const getSubOrganizations = async (): Promise<SubOrganization[]> => {
@@ -31,10 +31,9 @@ export const getSubOrganizations = async (): Promise<SubOrganization[]> => {
     const querySnapshot = await getDocs(collection(db, 'subOrganizations'));
     
     if (querySnapshot.empty) {
-      // Initialize with default organizations if none exist
       console.log('No sub-organizations found, initializing with defaults...');
       await initializeSubOrganizations();
-      return await getSubOrganizations(); // Recursive call after initialization
+      return await getSubOrganizations();
     }
     
     return querySnapshot.docs.map(doc => ({
@@ -43,7 +42,6 @@ export const getSubOrganizations = async (): Promise<SubOrganization[]> => {
     })) as SubOrganization[];
   } catch (error) {
     console.error('Error fetching sub-organizations:', error);
-    // Return default organizations with generated IDs as fallback
     return defaultSubOrganizations.map((org, index) => ({
       id: `default-${index}`,
       ...org
@@ -69,10 +67,16 @@ export const initializeSubOrganizations = async () => {
   }
 };
 
-export const updateSubOrgBudget = async (subOrgId: string, newBudget: number, newSpent?: number) => {
+export const updateSubOrgBudget = async (
+  subOrgId: string,
+  newBudgetAllocated: number,
+  newSpent?: number,
+  newInitialBudget?: number,
+  newCredit?: number
+) => {
   try {
     const updateData: any = {
-      budgetAllocated: newBudget,
+      // budgetAllocated: newBudgetAllocated,
       updatedAt: serverTimestamp()
     };
 
@@ -80,6 +84,14 @@ export const updateSubOrgBudget = async (subOrgId: string, newBudget: number, ne
       updateData.budgetSpent = newSpent;
     }
 
+    if (newInitialBudget !== undefined) {
+      updateData.initialBudget = newInitialBudget;
+    }
+
+    if (newCredit !== undefined) {
+      updateData.credit = newCredit;
+    }
+    updateData.budgetAllocated = updateData.initialBudget + updateData.credit;
     await updateDoc(doc(db, 'subOrganizations', subOrgId), updateData);
   } catch (error) {
     console.error('Error updating sub-organization budget:', error);

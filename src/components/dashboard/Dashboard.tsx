@@ -201,6 +201,8 @@ export const Dashboard: React.FC = () => {
   };
 
   const totalBudget = filteredSubOrgs.reduce((sum, org) => sum + org.budgetAllocated, 0);
+  const initialBudget = filteredSubOrgs.reduce((sum, org) => sum + org.initialBudget, 0);
+  const totalCredit = filteredSubOrgs.reduce((sum, org) => sum + org.credit, 0);
   const totalSpent = filteredSubOrgs.reduce((sum, org) => sum + org.budgetSpent, 0);
   const budgetRemaining = totalBudget - totalSpent;
 
@@ -376,6 +378,9 @@ export const Dashboard: React.FC = () => {
               <p className="text-lg sm:text-2xl font-bold text-gray-100 truncate">
                 ${totalBudget.toLocaleString()}
               </p>
+              <p className=" sm:text-2xl font-bold text-gray-300 truncate">
+                <span className="text-amber-500 text-base">${initialBudget.toLocaleString()}</span> <span className="text-base">+</span> <span className="text-green-500 text-base">${totalCredit.toLocaleString()}</span>
+              </p>
             </div>
           </div>
         </Card>
@@ -462,7 +467,7 @@ export const Dashboard: React.FC = () => {
                         )}
                       </div>
                       <span className="text-xs sm:text-sm text-gray-300 whitespace-nowrap ml-2">
-                        ${org.budgetSpent.toLocaleString()} / ${org.budgetAllocated.toLocaleString()}
+                      ${org.budgetSpent.toLocaleString()} / ${org.budgetAllocated.toLocaleString()}
                       </span>
                     </div>
                     <div className="w-full bg-gray-700 rounded-full h-2">

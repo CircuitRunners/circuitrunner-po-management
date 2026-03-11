@@ -12,6 +12,8 @@ export interface SubOrganization {
   name: string;
   budgetAllocated: number;
   budgetSpent: number;
+  initialBudget: number;
+  credit: number;
 }
 
 export interface LineItem {

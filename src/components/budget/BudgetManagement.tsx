@@ -9,12 +9,19 @@ import { SubOrganization } from '../../types';
 import { useModal } from '../../hooks/useModal';
 import * as XLSX from 'xlsx';
 
+type EditField = 'initialBudget' | 'credit';
+
+interface EditState {
+  id: string;
+  field: EditField;
+  value: string;
+}
+
 export const BudgetManagement: React.FC = () => {
   const { alertModal, showAlert, closeAlert } = useModal();
   const [budgets, setBudgets] = useState<SubOrganization[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState<string>('');
+  const [editState, setEditState] = useState<EditState | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
 
   useEffect(() => {
@@ -32,18 +39,18 @@ export const BudgetManagement: React.FC = () => {
     fetchBudgets();
   }, []);
 
-  const startEdit = (id: string, currentValue: number) => {
-    setEditingId(id);
-    setEditValue(currentValue.toString());
+  const startEdit = (id: string, field: EditField, currentValue: number) => {
+    setEditState({ id, field, value: currentValue.toString() });
   };
 
   const cancelEdit = () => {
-    setEditingId(null);
-    setEditValue('');
+    setEditState(null);
   };
 
   const saveEdit = async (id: string) => {
-    const newValue = parseFloat(editValue);
+    if (!editState) return;
+
+    const newValue = parseFloat(editState.value);
     if (isNaN(newValue) || newValue < 0) {
       await showAlert({
         title: 'Validation Error',
@@ -54,16 +61,31 @@ export const BudgetManagement: React.FC = () => {
     }
 
     try {
-      await updateSubOrgBudget(id, newValue);
-      setBudgets(budgets.map(budget => 
-        budget.id === id 
-          ? { ...budget, budgetAllocated: newValue }
-          : budget
-      ));
-      
-      setEditingId(null);
-      setEditValue('');
-      
+      const budget = budgets.find(b => b.id === id);
+      if (!budget) return;
+
+      if (editState.field === 'initialBudget') {
+        // budgetAllocated = initialBudget + credit
+        const newAllocated = newValue + (budget.credit ?? 0);
+        await updateSubOrgBudget(id, newAllocated, undefined, newValue, budget.credit);
+        setBudgets(budgets.map(b =>
+          b.id === id
+            ? { ...b, initialBudget: newValue, budgetAllocated: newAllocated }
+            : b
+        ));
+      } else {
+        // credit field
+        const newAllocated = (budget.initialBudget ?? budget.budgetAllocated) + newValue;
+        await updateSubOrgBudget(id, newAllocated, undefined, budget.initialBudget, newValue);
+        setBudgets(budgets.map(b =>
+          b.id === id
+            ? { ...b, credit: newValue, budgetAllocated: newAllocated }
+            : b
+        ));
+      }
+
+      setEditState(null);
+
       await showAlert({
         title: 'Success',
         message: 'Budget updated successfully',
@@ -82,13 +104,22 @@ export const BudgetManagement: React.FC = () => {
   const handleExportBudgetReport = async () => {
     setExportLoading(true);
     try {
-      // Calculate totals
       const totalAllocated = budgets.reduce((sum, budget) => sum + budget.budgetAllocated, 0);
       const totalSpent = budgets.reduce((sum, budget) => sum + budget.budgetSpent, 0);
       const totalRemaining = totalAllocated - totalSpent;
+      const totalCredit = budgets.reduce((sum, budget) => sum + (budget.credit ?? 0), 0);
 
-      // Prepare summary data
       const summaryData = [
+        {
+          'Metric': 'Total Initial Budget',
+          'Amount': `$${budgets.reduce((s, b) => s + (b.initialBudget ?? b.budgetAllocated), 0).toLocaleString()}`,
+          'Percentage': '-'
+        },
+        {
+          'Metric': 'Total Credits',
+          'Amount': `$${totalCredit.toLocaleString()}`,
+          'Percentage': '-'
+        },
         {
           'Metric': 'Total Budget Allocated',
           'Amount': `$${totalAllocated.toLocaleString()}`,
@@ -106,16 +137,17 @@ export const BudgetManagement: React.FC = () => {
         }
       ];
 
-      // Prepare detailed budget data
       const budgetData = budgets.map(budget => {
         const utilization = budget.budgetAllocated > 0 ? (budget.budgetSpent / budget.budgetAllocated) * 100 : 0;
         const remaining = budget.budgetAllocated - budget.budgetSpent;
-        const status = utilization > 100 ? 'Over Budget' : 
-                     utilization > 90 ? 'Critical' : 
+        const status = utilization > 100 ? 'Over Budget' :
+                     utilization > 90 ? 'Critical' :
                      utilization > 75 ? 'Warning' : 'Good';
 
         return {
           'Sub-Organization': budget.name,
+          'Initial Budget': budget.initialBudget ?? budget.budgetAllocated,
+          'Credit': budget.credit ?? 0,
           'Budget Allocated': budget.budgetAllocated,
           'Budget Spent': budget.budgetSpent,
           'Budget Remaining': remaining,
@@ -127,19 +159,17 @@ export const BudgetManagement: React.FC = () => {
         };
       });
 
-      // Sort by utilization percentage (highest first)
       budgetData.sort((a, b) => b['Utilization %'] - a['Utilization %']);
 
-      // Prepare alerts data
       const alertsData = budgets
         .filter(budget => {
           const utilization = budget.budgetAllocated > 0 ? (budget.budgetSpent / budget.budgetAllocated) * 100 : 0;
           return utilization > 75;
         })
         .map(budget => {
-          const utilization = budget.budgetAllocated > 0 ? (budget.budgetSpent / budget.budgetSpent) * 100 : 0;
+          const utilization = budget.budgetAllocated > 0 ? (budget.budgetSpent / budget.budgetAllocated) * 100 : 0;
           const remaining = budget.budgetAllocated - budget.budgetSpent;
-          
+
           return {
             'Sub-Organization': budget.name,
             'Alert Type': utilization > 100 ? 'Over Budget' : 'High Usage',
@@ -150,61 +180,30 @@ export const BudgetManagement: React.FC = () => {
           };
         });
 
-      // Create workbook
       const wb = XLSX.utils.book_new();
 
-      // Add Summary sheet
       const summaryWs = XLSX.utils.json_to_sheet(summaryData);
-      
-      // Set column widths for summary
-      summaryWs['!cols'] = [
-        { wch: 25 }, // Metric
-        { wch: 20 }, // Amount
-        { wch: 15 }  // Percentage
-      ];
-      
+      summaryWs['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 15 }];
       XLSX.utils.book_append_sheet(wb, summaryWs, 'Budget Summary');
 
-      // Add Detailed Budget sheet
       const budgetWs = XLSX.utils.json_to_sheet(budgetData);
-      
-      // Set column widths for budget data
       budgetWs['!cols'] = [
-        { wch: 25 }, // Sub-Organization
-        { wch: 15 }, // Budget Allocated
-        { wch: 15 }, // Budget Spent
-        { wch: 15 }, // Budget Remaining
-        { wch: 12 }, // Utilization %
-        { wch: 12 }, // Status
-        { wch: 18 }, // Allocated (Formatted)
-        { wch: 18 }, // Spent (Formatted)
-        { wch: 18 }  // Remaining (Formatted)
+        { wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 15 },
+        { wch: 15 }, { wch: 15 }, { wch: 12 }, { wch: 12 },
+        { wch: 18 }, { wch: 18 }, { wch: 18 }
       ];
-      
       XLSX.utils.book_append_sheet(wb, budgetWs, 'Detailed Budgets');
 
-      // Add Budget Alerts sheet (only if there are alerts)
       if (alertsData.length > 0) {
         const alertsWs = XLSX.utils.json_to_sheet(alertsData);
-        
-        // Set column widths for alerts
         alertsWs['!cols'] = [
-          { wch: 25 }, // Sub-Organization
-          { wch: 15 }, // Alert Type
-          { wch: 12 }, // Utilization %
-          { wch: 20 }, // Amount Over/Under
-          { wch: 10 }, // Priority
-          { wch: 30 }  // Recommendation
+          { wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 10 }, { wch: 30 }
         ];
-        
         XLSX.utils.book_append_sheet(wb, alertsWs, 'Budget Alerts');
       }
 
-      // Generate filename with current date
       const date = new Date().toISOString().split('T')[0];
       const filename = `budget_report_${date}.xlsx`;
-
-      // Download file
       XLSX.writeFile(wb, filename);
 
       await showAlert({
@@ -212,7 +211,6 @@ export const BudgetManagement: React.FC = () => {
         message: `Budget report has been exported successfully as "${filename}". The report includes budget summary, detailed breakdowns, and any budget alerts.`,
         variant: 'success'
       });
-
     } catch (error) {
       console.error('Error exporting budget report:', error);
       await showAlert({
@@ -231,11 +229,55 @@ export const BudgetManagement: React.FC = () => {
 
   const getBudgetStatus = (budget: SubOrganization) => {
     const utilization = budget.budgetAllocated > 0 ? (budget.budgetSpent / budget.budgetAllocated) * 100 : 0;
-    
+
     if (utilization > 100) return { status: 'over', color: 'red', label: 'Over Budget' };
     if (utilization > 90) return { status: 'critical', color: 'red', label: 'Critical' };
     if (utilization > 75) return { status: 'warning', color: 'yellow', label: 'Warning' };
     return { status: 'good', color: 'green', label: 'Good' };
+  };
+
+  const EditableCell: React.FC<{
+    budget: SubOrganization;
+    field: EditField;
+    value: number;
+  }> = ({ budget, field, value }) => {
+    const isEditing = editState?.id === budget.id && editState?.field === field;
+
+    if (isEditing) {
+      return (
+        <div className="flex items-center justify-end space-x-2">
+          <input
+            type="number"
+            value={editState.value}
+            onChange={(e) => setEditState({ ...editState, value: e.target.value })}
+            className="w-24 px-2 py-1 text-sm bg-gray-600 border border-gray-500 rounded focus:ring-1 focus:ring-green-500 text-gray-100"
+            min="0"
+            step="100"
+            autoFocus
+          />
+          <Button size="sm" onClick={() => saveEdit(budget.id)} className="p-1">
+            <Save className="h-3 w-3" />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={cancelEdit} className="p-1">
+            <X className="h-3 w-3" />
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex items-center justify-end space-x-2 group">
+        <span className="font-medium text-gray-100">${value.toLocaleString()}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => startEdit(budget.id, field, value)}
+          className="p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+        >
+          <Edit className="h-3 w-3" />
+        </Button>
+      </div>
+    );
   };
 
   if (loading) {
@@ -250,8 +292,8 @@ export const BudgetManagement: React.FC = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-gray-100">Budget Management</h1>
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           onClick={handleExportBudgetReport}
           loading={exportLoading}
           disabled={exportLoading}
@@ -311,18 +353,25 @@ export const BudgetManagement: React.FC = () => {
         <CardHeader>
           <CardTitle>Sub-Organization Budgets</CardTitle>
         </CardHeader>
-        
+
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-600">
                 <th className="text-left py-3 px-4 font-medium text-gray-200">Sub-Organization</th>
+                <th className="text-right py-3 px-4 font-medium text-gray-200">
+                  Initial Budget
+                  <span className="ml-1 text-xs text-gray-400 font-normal">(editable)</span>
+                </th>
+                <th className="text-right py-3 px-4 font-medium text-gray-200">
+                  Credit
+                  <span className="ml-1 text-xs text-gray-400 font-normal">(editable)</span>
+                </th>
                 <th className="text-right py-3 px-4 font-medium text-gray-200">Allocated Budget</th>
                 <th className="text-right py-3 px-4 font-medium text-gray-200">Spent</th>
                 <th className="text-right py-3 px-4 font-medium text-gray-200">Remaining</th>
                 <th className="text-center py-3 px-4 font-medium text-gray-200">Utilization</th>
                 <th className="text-center py-3 px-4 font-medium text-gray-200">Status</th>
-                <th className="text-center py-3 px-4 font-medium text-gray-200">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -330,44 +379,30 @@ export const BudgetManagement: React.FC = () => {
                 const status = getBudgetStatus(budget);
                 const utilization = budget.budgetAllocated > 0 ? (budget.budgetSpent / budget.budgetAllocated) * 100 : 0;
                 const remaining = budget.budgetAllocated - budget.budgetSpent;
-                const isEditing = editingId === budget.id;
+                const initialBudget = budget.initialBudget ?? budget.budgetAllocated;
+                const credit = budget.credit ?? 0;
 
                 return (
                   <tr key={budget.id} className="border-b border-gray-700 hover:bg-gray-700/50">
                     <td className="py-4 px-4">
                       <div className="font-medium text-gray-100">{budget.name}</div>
                     </td>
+
+                    {/* Initial Budget — editable */}
                     <td className="py-4 px-4 text-right">
-                      {isEditing ? (
-                        <div className="flex items-center justify-end space-x-2">
-                          <input
-                            type="number"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            className="w-24 px-2 py-1 text-sm bg-gray-600 border border-gray-500 rounded focus:ring-1 focus:ring-green-500 text-gray-100"
-                            min="0"
-                            step="100"
-                          />
-                          <Button
-                            size="sm"
-                            onClick={() => saveEdit(budget.id)}
-                            className="p-1"
-                          >
-                            <Save className="h-3 w-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={cancelEdit}
-                            className="p-1"
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <span className="font-medium text-gray-100">${budget.budgetAllocated.toLocaleString()}</span>
-                      )}
+                      <EditableCell budget={budget} field="initialBudget" value={initialBudget} />
                     </td>
+
+                    {/* Credit — editable */}
+                    <td className="py-4 px-4 text-right">
+                      <EditableCell budget={budget} field="credit" value={credit} />
+                    </td>
+
+                    {/* Allocated Budget — read-only, derived */}
+                    <td className="py-4 px-4 text-right">
+                      <span className="font-medium text-gray-400">${budget.budgetAllocated.toLocaleString()}</span>
+                    </td>
+
                     <td className="py-4 px-4 text-right text-gray-300">
                       ${budget.budgetSpent.toLocaleString()}
                     </td>
@@ -396,12 +431,12 @@ export const BudgetManagement: React.FC = () => {
                       </div>
                     </td>
                     <td className="py-4 px-4 text-center">
-                      <Badge 
+                      <Badge
                         variant={
-                          status.status === 'over' || status.status === 'critical' 
-                            ? 'danger' 
-                            : status.status === 'warning' 
-                              ? 'warning' 
+                          status.status === 'over' || status.status === 'critical'
+                            ? 'danger'
+                            : status.status === 'warning'
+                              ? 'warning'
                               : 'success'
                         }
                         size="sm"
@@ -409,18 +444,6 @@ export const BudgetManagement: React.FC = () => {
                         {status.status === 'over' && <AlertTriangle className="h-3 w-3 mr-1" />}
                         {status.label}
                       </Badge>
-                    </td>
-                    <td className="py-4 px-4 text-center">
-                      {!isEditing && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => startEdit(budget.id, budget.budgetAllocated)}
-                          className="p-1"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                      )}
                     </td>
                   </tr>
                 );
@@ -447,14 +470,14 @@ export const BudgetManagement: React.FC = () => {
             .map(budget => {
               const utilization = budget.budgetAllocated > 0 ? (budget.budgetSpent / budget.budgetAllocated) * 100 : 0;
               const remaining = budget.budgetAllocated - budget.budgetSpent;
-              
+
               return (
                 <div key={budget.id} className="flex items-center justify-between p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg">
                   <div className="flex items-center">
                     <AlertTriangle className="h-4 w-4 text-yellow-400 mr-2" />
                     <span className="font-medium text-yellow-200">{budget.name}</span>
                     <span className="text-yellow-300 ml-2">
-                      {utilization > 100 
+                      {utilization > 100
                         ? `Over budget by $${Math.abs(remaining).toLocaleString()}`
                         : `${utilization.toFixed(0)}% of budget used`
                       }
@@ -485,7 +508,7 @@ export const BudgetManagement: React.FC = () => {
         <div className="space-y-3 text-sm text-gray-300">
           <p><strong className="text-gray-200">Budget Report Contents:</strong></p>
           <ul className="list-disc list-inside space-y-1 ml-4">
-            <li><strong>Budget Summary:</strong> Overall totals and percentages</li>
+            <li><strong>Budget Summary:</strong> Overall totals and percentages, including initial budgets and credits</li>
             <li><strong>Detailed Budgets:</strong> Complete breakdown by sub-organization with utilization metrics</li>
             <li><strong>Budget Alerts:</strong> Organizations with high usage or over-budget status (if any)</li>
           </ul>
