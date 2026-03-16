@@ -86,10 +86,13 @@ export const updateSubOrgBudget = async (
 
     if (newInitialBudget !== undefined) {
       updateData.initialBudget = newInitialBudget;
+    } else {
+      updateData.initialBudget = (await getSubOrgById(subOrgId))!.initialBudget;
     }
-
     if (newCredit !== undefined) {
       updateData.credit = newCredit;
+    } else {
+      updateData.credit = (await getSubOrgById(subOrgId))!.credit;
     }
     updateData.budgetAllocated = updateData.initialBudget + updateData.credit;
     await updateDoc(doc(db, 'subOrganizations', subOrgId), updateData);
