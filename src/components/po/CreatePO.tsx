@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, ExternalLink, Save, RefreshCw, MessageSquare, Building } from 'lucide-react';
 import { Card, CardHeader, CardTitle } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { ConfirmModal, AlertModal } from '../ui/Modal';
-import { LineItem, SubOrganization } from '../../types';
+import { LineItem, POOrganization, SubOrganization } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { createPO, updatePO, getPOById } from '../../services/poService';
 import { getSubOrganizations } from '../../services/subOrgService';
@@ -12,6 +12,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useModal } from '../../hooks/useModal';
 
 const PO_NAME_MAX_LENGTH = 30;
+const TEAM_SUBCATEGORIES: Array<NonNullable<LineItem['teamSubcategory']>> = ['mechanical', 'electrical'];
+const ITEM_CATEGORIES: Array<NonNullable<LineItem['itemCategory']>> = ['consumable', 'part', 'miscellaneous'];
+
+const toDisplayLabel = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 export const CreatePO: React.FC = () => {
   const { currentUser, userProfile } = useAuth();
@@ -33,7 +37,19 @@ export const CreatePO: React.FC = () => {
   const [originalPOStatus, setOriginalPOStatus] = useState<string | null>(null);
   const [originalAdminComments, setOriginalAdminComments] = useState<string | null>(null);
   const [lineItems, setLineItems] = useState<LineItem[]>([
-    { id: '1', vendor: '', itemName: '', sku: '', quantity: 1, unitPrice: 0, link: '', notes: '', totalPrice: 0 }
+    {
+      id: '1',
+      vendor: '',
+      itemName: '',
+      teamSubcategory: 'mechanical',
+      itemCategory: 'miscellaneous',
+      sku: '',
+      quantity: 1,
+      unitPrice: 0,
+      link: '',
+      notes: '',
+      totalPrice: 0
+    }
   ]);
   
   useEffect(() => {
@@ -92,7 +108,12 @@ export const CreatePO: React.FC = () => {
         
         setSpecialRequest(po.specialRequest || '');
         setOverBudgetJustification(po.overBudgetJustification || '');
-        setLineItems(po.lineItems);
+        const normalizedLineItems = po.lineItems.map(item => ({
+          ...item,
+          teamSubcategory: item.teamSubcategory || 'mechanical',
+          itemCategory: item.itemCategory || 'miscellaneous'
+        }));
+        setLineItems(normalizedLineItems);
         
       } else {
         await showAlert({
@@ -121,6 +142,8 @@ export const CreatePO: React.FC = () => {
       id: newId,
       vendor: '',
       itemName: '',
+      teamSubcategory: 'mechanical',
+      itemCategory: 'miscellaneous',
       sku: '',
       quantity: 1,
       unitPrice: 0,
@@ -137,7 +160,11 @@ export const CreatePO: React.FC = () => {
     }
   };
 
-  const updateLineItem = (id: string, field: keyof LineItem, value: string | number) => {
+  const updateLineItem = (
+    id: string,
+    field: keyof LineItem,
+    value: string | number | LineItem['teamSubcategory'] | LineItem['itemCategory']
+  ) => {
     setLineItems(lineItems.map(item => {
       if (item.id === id) {
         const updatedItem = { ...item, [field]: value };
@@ -921,6 +948,34 @@ export const CreatePO: React.FC = () => {
                       className="w-full px-2 py-1 text-sm bg-gray-600 border border-gray-500 rounded focus:ring-1 focus:ring-green-500 text-gray-100 placeholder-gray-400"
                       placeholder="Item description"
                     />
+                  </div>
+                  <div className="lg:col-span-2">
+                    <label className="block text-xs font-medium text-gray-300 mb-1">Team Subcategory<span className="text-red-400">*</span></label>
+                    <select
+                      value={item.teamSubcategory || 'mechanical'}
+                      onChange={(e) => updateLineItem(item.id, 'teamSubcategory', e.target.value)}
+                      className="w-full px-2 py-1 text-sm bg-gray-600 border border-gray-500 rounded focus:ring-1 focus:ring-green-500 text-gray-100"
+                    >
+                      {TEAM_SUBCATEGORIES.map(option => (
+                        <option key={option} value={option}>
+                          {toDisplayLabel(option)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="lg:col-span-2">
+                    <label className="block text-xs font-medium text-gray-300 mb-1">Type<span className="text-red-400">*</span></label>
+                    <select
+                      value={item.itemCategory || 'miscellaneous'}
+                      onChange={(e) => updateLineItem(item.id, 'itemCategory', e.target.value)}
+                      className="w-full px-2 py-1 text-sm bg-gray-600 border border-gray-500 rounded focus:ring-1 focus:ring-green-500 text-gray-100"
+                    >
+                      {ITEM_CATEGORIES.map(option => (
+                        <option key={option} value={option}>
+                          {toDisplayLabel(option)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="lg:col-span-2">
                     <label className="block text-xs font-medium text-gray-300 mb-1">SKU (Optional)</label>
