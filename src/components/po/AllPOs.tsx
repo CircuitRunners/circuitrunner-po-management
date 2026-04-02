@@ -3,15 +3,23 @@ import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { ConfirmModal, AlertModal } from '../ui/Modal';
-import { ExternalLink, Filter, Search, Eye, Trash2 } from 'lucide-react';
+import { Search, Eye, Trash2, Download } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { getAllPOs, deletePO } from '../../services/poService';
 import { getSubOrganizations } from '../../services/subOrgService';
 import { PurchaseOrder, SubOrganization } from '../../types';
-import { format } from 'date-fns';
 import { PODetailsModal } from './PODetailsModal';
 import { useAuth } from '../../contexts/AuthContext';
 import { GuestAllPOs } from './GuestAllPOs';
 import { useModal } from '../../hooks/useModal';
+import {
+  formatPoDay,
+  lineItemsSearchHaystack,
+  poMatchesLineItemCategory,
+  poMatchesLineSubcategory,
+  poTimestampSeconds,
+} from '../../utils/poFilters';
+import { formatItemCategory, formatTeamSubcategory } from '../../utils/poLineItemDisplay';
 
 export const AllPOs: React.FC = () => {
   const { isGuest } = useAuth();
@@ -22,6 +30,8 @@ export const AllPOs: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [subOrgFilter, setSubOrgFilter] = useState<string>('all');
+  const [teamSubcategoryFilter, setTeamSubcategoryFilter] = useState<string>('all');
+  const [itemCategoryFilter, setItemCategoryFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -57,20 +67,36 @@ export const AllPOs: React.FC = () => {
       });
     }
 
+    if (teamSubcategoryFilter !== 'all') {
+      filtered = filtered.filter(po =>
+        poMatchesLineSubcategory(po, teamSubcategoryFilter as 'mechanical' | 'electrical')
+      );
+    }
+
+    if (itemCategoryFilter !== 'all') {
+      filtered = filtered.filter(po =>
+        poMatchesLineItemCategory(
+          po,
+          itemCategoryFilter as 'consumable' | 'part' | 'miscellaneous'
+        )
+      );
+    }
+
     if (searchTerm) {
-      filtered = filtered.filter(po => 
-        po.creatorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (po.subOrgName && po.subOrgName.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (po.organizations && po.organizations.some(org => 
-          org.subOrgName.toLowerCase().includes(searchTerm.toLowerCase())
-        )) ||
-        po.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (po.name && po.name.toLowerCase().includes(searchTerm.toLowerCase()))
+      const q = searchTerm.toLowerCase();
+      filtered = filtered.filter(po =>
+        po.creatorName.toLowerCase().includes(q) ||
+        (po.subOrgName && po.subOrgName.toLowerCase().includes(q)) ||
+        (po.organizations &&
+          po.organizations.some(org => org.subOrgName.toLowerCase().includes(q))) ||
+        po.id.toLowerCase().includes(q) ||
+        (po.name && po.name.toLowerCase().includes(q)) ||
+        lineItemsSearchHaystack(po).includes(q)
       );
     }
 
     setFilteredPOs(filtered);
-  }, [pos, statusFilter, subOrgFilter, searchTerm]);
+  }, [pos, statusFilter, subOrgFilter, teamSubcategoryFilter, itemCategoryFilter, searchTerm]);
 
   const fetchAllPOs = async () => {
     try {
@@ -190,11 +216,7 @@ export const AllPOs: React.FC = () => {
 
     // Sort within each group by newest first
     Object.keys(grouped).forEach(status => {
-      grouped[status].sort((a, b) => {
-        const aTime = a.updatedAt?.seconds || a.createdAt?.seconds || 0;
-        const bTime = b.updatedAt?.seconds || b.createdAt?.seconds || 0;
-        return bTime - aTime;
-      });
+      grouped[status].sort((a, b) => poTimestampSeconds(b) - poTimestampSeconds(a));
     });
 
     // Return in the desired order
@@ -210,6 +232,98 @@ export const AllPOs: React.FC = () => {
 
   const groupedPOs = groupPOsByStatus(filteredPOs);
 
+  const exportFilteredToExcel = () => {
+    const sorted = [...filteredPOs].sort(
+      (a, b) => poTimestampSeconds(b) - poTimestampSeconds(a)
+    );
+    const date = new Date().toISOString().split('T')[0];
+
+    const poOverview = sorted.map(po => ({
+      'PO Name': po.name || `PO #${po.id.slice(-6).toUpperCase()}`,
+      Status: po.status.replace(/_/g, ' '),
+      Creator: po.creatorName,
+      'Approved By': po.approvedByName || '',
+      'Purchased By': po.purchasedByName || '',
+      'Sub-Organization': po.subOrgName || '',
+      'Total Amount': po.totalAmount,
+      'Line Item Count': po.lineItems.length,
+      Created: formatPoDay(po.createdAt),
+    }));
+
+    const lineRows: Record<string, string | number>[] = [];
+    sorted.forEach(po => {
+      po.lineItems.forEach((item, index) => {
+        lineRows.push({
+          'PO Name': po.name || `PO #${po.id.slice(-6).toUpperCase()}`,
+          Status: po.status.replace(/_/g, ' '),
+          'Line #': index + 1,
+          'Team Subcategory': formatTeamSubcategory(item.teamSubcategory),
+          Type: formatItemCategory(item.itemCategory),
+          Vendor: item.vendor,
+          'Item Name': item.itemName,
+          SKU: item.sku || '',
+          Quantity: item.quantity,
+          'Unit Price': item.unitPrice,
+          'Line Total': item.totalPrice,
+          Link: item.link || '',
+          Notes: item.notes || '',
+        });
+      });
+    });
+
+    const wb = XLSX.utils.book_new();
+    const wsPo = XLSX.utils.json_to_sheet(poOverview);
+    
+    wsPo['!cols'] = [
+      { wch: 28 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 20 },{ wch: 24 },
+      { wch: 14}, { wch: 12 }, { wch: 14 },
+    ];
+    var colIndex = XLSX.utils.decode_col("G"); // Target column B (0-indexed as 1)
+    var range = XLSX.utils.decode_range(wsPo['!ref']!);
+
+    for (var i = range.s.r + 1; i <= range.e.r; ++i) { // Start at s.r + 1 to skip header
+      var cellRef = XLSX.utils.encode_cell({ r: i, c: colIndex });
+      if (!wsPo[cellRef]) continue;
+      
+      // Ensure the cell is treated as a number ('n')
+      if (wsPo[cellRef].t === 'n') {
+        wsPo[cellRef].z = '"$"#,##0.00'; // Set the currency format
+        delete wsPo[cellRef].w;         // Clear old formatted text to force refresh
+      }
+    }
+    XLSX.utils.book_append_sheet(wb, wsPo, 'POs');
+
+    const wsLines = XLSX.utils.json_to_sheet(lineRows);
+    wsLines['!cols'] = [
+      { wch: 28 }, { wch: 22 }, { wch: 8 }, { wch: 16 }, { wch: 18 }, { wch: 14 },
+      { wch: 20 }, { wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 12 }, { wch: 32 },
+      { wch: 40 }, { wch: 28 },
+    ];
+    var colIndexJ = XLSX.utils.decode_col("J"); // Target column B (0-indexed as 1)
+    var colIndexK= XLSX.utils.decode_col("K"); // Target column B (0-indexed as 1)
+    var range = XLSX.utils.decode_range(wsLines['!ref']!);
+
+    for (var i = range.s.r + 1; i <= range.e.r; ++i) { // Start at s.r + 1 to skip header
+      var cellRefJ = XLSX.utils.encode_cell({ r: i, c: colIndexJ });
+      var cellRefK = XLSX.utils.encode_cell({ r: i, c: colIndexK });
+      if (!wsLines[cellRefJ]) continue;
+      if (!wsLines[cellRefK]) continue;
+      
+      // Ensure the cell is treated as a number ('n')
+      if (wsLines[cellRefJ].t === 'n') {
+        wsLines[cellRefJ].z = '"$"#,##0.00'; // Set the currency format
+        delete wsLines[cellRefJ].w;         // Clear old formatted text to force refresh
+      }
+      if (wsLines[cellRefK].t === 'n') {
+        wsLines[cellRefK].z = '"$"#,##0.00'; // Set the currency format
+        delete wsLines[cellRefK].w;         // Clear old formatted text to force refresh
+      }
+    }
+    XLSX.utils.book_append_sheet(wb, wsLines, 'Line Items');
+
+    XLSX.writeFile(wb, `purchase_orders_export_${date}.xlsx`);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -220,8 +334,16 @@ export const AllPOs: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <h1 className="text-3xl font-bold text-gray-100">All Purchase Orders</h1>
+        <Button
+          variant="outline"
+          onClick={exportFilteredToExcel}
+          disabled={filteredPOs.length === 0}
+        >
+          <Download className="h-4 w-4 mr-2" />
+          Export to Excel
+        </Button>
       </div>
 
       {/* Filters */}
@@ -232,7 +354,7 @@ export const AllPOs: React.FC = () => {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search by name, creator, sub-org, or PO ID..."
+                placeholder="Search POs, line items, mechanical/electrical, consumable/part…"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10 w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-100 placeholder-gray-400"
@@ -269,6 +391,31 @@ export const AllPOs: React.FC = () => {
                 ))}
               </select>
             </div>
+            <div className="sm:w-48">
+              <select
+                value={teamSubcategoryFilter}
+                onChange={(e) => setTeamSubcategoryFilter(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-100"
+                title="Filter POs that include at least one line in this team subcategory"
+              >
+                <option value="all" className="text-gray-100 bg-gray-700">All team subcategories</option>
+                <option value="mechanical" className="text-gray-100 bg-gray-700">Mechanical</option>
+                <option value="electrical" className="text-gray-100 bg-gray-700">Electrical</option>
+              </select>
+            </div>
+            <div className="sm:w-48">
+              <select
+                value={itemCategoryFilter}
+                onChange={(e) => setItemCategoryFilter(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-100"
+                title="Filter POs that include at least one line of this type"
+              >
+                <option value="all" className="text-gray-100 bg-gray-700">All line types</option>
+                <option value="consumable" className="text-gray-100 bg-gray-700">Consumable</option>
+                <option value="part" className="text-gray-100 bg-gray-700">Part</option>
+                <option value="miscellaneous" className="text-gray-100 bg-gray-700">Miscellaneous</option>
+              </select>
+            </div>
           </div>
         </div>
       </Card>
@@ -278,6 +425,8 @@ export const AllPOs: React.FC = () => {
         Showing {filteredPOs.length} of {pos.length} purchase orders
         {statusFilter !== 'all' && ` (status: ${statusFilter.replace('_', ' ')})`}
         {subOrgFilter !== 'all' && ` (organization: ${subOrgs.find(org => org.id === subOrgFilter)?.name}${subOrgFilter !== 'all' ? ' - includes multi-org POs' : ''})`}
+        {teamSubcategoryFilter !== 'all' && ` (team subcategory: ${teamSubcategoryFilter})`}
+        {itemCategoryFilter !== 'all' && ` (line type: ${itemCategoryFilter})`}
         {searchTerm && ` (search: "${searchTerm}")`}
       </div>
 
@@ -340,13 +489,10 @@ export const AllPOs: React.FC = () => {
                           <div>
                             <span className="font-medium text-gray-200">
                               {po.status === 'draft' ? 'Last Updated:' : 'Created:'}
-                            </span> {
-                              po.updatedAt && po.status === 'draft' 
-                                ? format(new Date(po.updatedAt.seconds * 1000), 'MMM dd, yyyy')
-                                : po.createdAt 
-                                  ? format(new Date(po.createdAt.seconds * 1000), 'MMM dd, yyyy') 
-                                  : 'N/A'
-                            }
+                            </span>{' '}
+                            {po.status === 'draft'
+                              ? formatPoDay(po.updatedAt || po.createdAt)
+                              : formatPoDay(po.createdAt)}
                           </div>
                         </div>
 
@@ -354,7 +500,9 @@ export const AllPOs: React.FC = () => {
                           <span className="font-medium text-gray-200">Items:</span> {po.lineItems.length} line item{po.lineItems.length !== 1 ? 's' : ''}
                           {po.lineItems.slice(0, 2).map((item, index) => (
                             <span key={index} className="ml-2">
-                              • {item.itemName} ({item.quantity}x)
+                              • {item.itemName} ({item.quantity}x,{' '}
+                              {formatTeamSubcategory(item.teamSubcategory)},{' '}
+                              {formatItemCategory(item.itemCategory)})
                               {item.sku && ` [${item.sku}]`}
                             </span>
                           ))}

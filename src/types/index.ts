@@ -20,6 +20,8 @@ export interface LineItem {
   id: string;
   vendor: string;
   itemName: string;
+  teamSubcategory?: 'mechanical' | 'electrical';
+  itemCategory?: 'consumable' | 'part' | 'miscellaneous';
   sku?: string;
   quantity: number;
   unitPrice: number;

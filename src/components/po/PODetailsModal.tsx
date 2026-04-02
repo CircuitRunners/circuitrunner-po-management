@@ -10,6 +10,7 @@ import { updatePOStatus } from '../../services/poService';
 import { format } from 'date-fns';
 import { useModal } from '../../hooks/useModal';
 import * as XLSX from 'xlsx';
+import { formatItemCategory, formatTeamSubcategory } from '../../utils/poLineItemDisplay';
 
 interface PODetailsModalProps {
   po: PurchaseOrder;
@@ -176,6 +177,8 @@ export const PODetailsModal: React.FC<PODetailsModalProps> = ({
       // Prepare line items data
       const lineItemsData = po.lineItems.map((item, index) => ({
         'Item #': index + 1,
+        'Team Subcategory': formatTeamSubcategory(item.teamSubcategory),
+        'Type': formatItemCategory(item.itemCategory),
         'Vendor': item.vendor,
         'Item Name': item.itemName,
         'SKU': item.sku || 'N/A',
@@ -210,6 +213,8 @@ export const PODetailsModal: React.FC<PODetailsModalProps> = ({
       // Set column widths for line items sheet
       const lineItemsColWidths = [
         { wch: 8 },  // Item #
+        { wch: 18 }, // Team Subcategory
+        { wch: 14 }, // Type
         { wch: 20 }, // Vendor
         { wch: 30 }, // Item Name
         { wch: 15 }, // SKU
@@ -508,6 +513,8 @@ export const PODetailsModal: React.FC<PODetailsModalProps> = ({
                     )}
                     <th className="text-left py-3 px-4 font-medium text-gray-200">Item</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-200">Vendor</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-200">Team Subcategory</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-200">Item Type</th>
                     <th className="text-left py-3 px-4 font-medium text-gray-200">SKU</th>
                     <th className="text-center py-3 px-4 font-medium text-gray-200">Qty</th>
                     <th className="text-right py-3 px-4 font-medium text-gray-200">Unit Price</th>
@@ -541,6 +548,12 @@ export const PODetailsModal: React.FC<PODetailsModalProps> = ({
                         </td>
                         <td className={`py-3 px-4 text-gray-300 ${textStyle}`}>
                           {item.vendor}
+                        </td>
+                        <td className={`py-3 px-4 text-gray-300 text-sm ${textStyle}`}>
+                          {formatTeamSubcategory(item.teamSubcategory)}
+                        </td>
+                        <td className={`py-3 px-4 text-gray-300 text-sm ${textStyle}`}>
+                          {formatItemCategory(item.itemCategory)}
                         </td>
                         <td className={`py-3 px-4 text-gray-300 ${textStyle}`}>
                           {item.sku || 'N/A'}
@@ -577,7 +590,7 @@ export const PODetailsModal: React.FC<PODetailsModalProps> = ({
                 </tbody>
                 <tfoot className="bg-gray-700">
                   <tr>
-                    <td colSpan={showCheckboxes ? 7 : 6} className="py-3 px-4 text-right font-medium text-gray-200">
+                    <td colSpan={showCheckboxes ? 8 : 7} className="py-3 px-4 text-right font-medium text-gray-200">
                       Total Amount:
                     </td>
                     <td className="py-3 px-4 text-right font-bold text-lg text-green-400">
