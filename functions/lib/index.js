@@ -132,9 +132,9 @@ function footerLinks() {
         return "<p style=\"color:#666;font-size:12px\">Open the PO app to view details.</p>";
     }
     return `<p style="margin-top:16px;font-size:13px">
-    <a href="${base}/pending-approval">Pending approval</a> ·
-    <a href="${base}/pending-purchase">Pending purchase</a> ·
-    <a href="${base}/my-pos">My POs</a>
+    <a href="${base}/create-po">Create new PO</a> ·
+    <a href="${base}/my-pos">My POs</a> ·
+    <a href="${base}/all-pos">All POs </a>
   </p>`;
 }
 exports.onPurchaseOrderWrite = (0, firestore_2.onDocumentWritten)({
@@ -191,7 +191,7 @@ exports.onPurchaseOrderWrite = (0, firestore_2.onDocumentWritten)({
                     transporter,
                     from,
                     to,
-                    subject: `[PO] New request pending approval: ${label}`,
+                    subject: `[PO] New request from ${creatorName} pending approval: ${label}`,
                     html,
                 });
             }
@@ -231,7 +231,7 @@ exports.onPurchaseOrderWrite = (0, firestore_2.onDocumentWritten)({
                     transporter,
                     from,
                     to: creatorEmail,
-                    subject: `[PO] Your request was approved: ${label}`,
+                    subject: `[PO] Your PO was approved: ${label}`,
                     html: directorHtml,
                 });
             }
@@ -253,7 +253,7 @@ exports.onPurchaseOrderWrite = (0, firestore_2.onDocumentWritten)({
         const purchasedBy = typeof after.purchasedByName === "string"
             ? after.purchasedByName
             : "Purchasing";
-        const html = `<p>Your purchase order <strong>${label}</strong> has been marked as <strong>purchased</strong> by ${purchasedBy}.</p>
+        const html = `<p>Your purchase order <strong>${label}</strong> has been <strong>purchased</strong> by ${purchasedBy}.</p>
         <p>Total: <strong>$${total}</strong>.</p>
         ${footerLinks()}`;
         try {
