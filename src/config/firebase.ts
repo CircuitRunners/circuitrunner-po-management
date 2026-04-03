@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -37,5 +37,19 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+/** Point Firestore at the local emulator (must match firebase.json). Requires `firebase emulators:start --only functions,firestore`. */
+const useFirestoreEmulator =
+  import.meta.env.DEV && import.meta.env.VITE_USE_FIRESTORE_EMULATOR === 'true';
+if (useFirestoreEmulator) {
+  const host = import.meta.env.VITE_FIRESTORE_EMULATOR_HOST || '127.0.0.1';
+  const port = Number(import.meta.env.VITE_FIRESTORE_EMULATOR_PORT || 8080);
+  try {
+    connectFirestoreEmulator(db, host, port);
+  } catch {
+    // Already connected (e.g. Vite HMR)
+  }
+}
+
 export const storage = getStorage(app);
 export default app;
